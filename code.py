@@ -62,16 +62,19 @@ switch = secrets["aio_username"] + "/feeds/arugula.light-switch"
 def connected(client, userdata, flags, rc):
     # This function will be called when the client is connected
     # successfully to the broker.
-    print("Connected to Adafruit IO! Listening for topic changes on %s" % light_feed)
+    print("Connected to Adafruit IO!")
+    '''print("Connected to Adafruit IO! Listening for topic changes on %s" % light_feed)
     print("Connected to Adafruit IO! Listening for topic changes on %s" % pump_feed)
     print("Connected to Adafruit IO! Listening for topic changes on %s" % manual)
-    print("Connected to Adafruit IO! Listening for topic changes on %s" % switch)
+    print("Connected to Adafruit IO! Listening for topic changes on %s" % switch)'''
     # Subscribe to all changes on the pump_feed.
     client.subscribe(light_feed)
     client.subscribe(pump_feed)
     client.subscribe(manual)
     client.subscribe(switch)
-    
+    mqtt_client.publish(pump_feed, 0)
+    mqtt_client.publish(manual, 0)
+    mqtt_client.publish(switch, 0)
 
 
 def disconnected(client, userdata, rc):
@@ -80,19 +83,19 @@ def disconnected(client, userdata, rc):
 
 
 def message(client, topic, message):
+    global override
     # This method is called when a topic the client is subscribed to
     # has a new message.
     
-    print("New message on topic {0}: {1}".format(topic, message))
-    print(override)
+    #print("New message on topic {0}: {1}".format(topic, message))
             
     if(topic == switch):
         if int(message) == 1:
-            print("light is now on")
+            print("Light is now on")
             pixels.fill(hex_to_rgb("#1700ff"))
             pixels.show()
         else:
-            print("light is now off")
+            print("Light is now off")
             pixels.fill((0, 0, 0))
             pixels.show()
     
@@ -100,16 +103,12 @@ def message(client, topic, message):
         if int(message) == 1:
             print("MANUAL OVERRIDE INITIATED")
             override = 1
-            print(override)
-            return override
         else:
             print("Manual Override Deactivated")
             override = 0
-            print(override)
-            return override
+
             
     if(topic == pump_feed):
-        print(override)
         if(override == 1):
             if int(message) == 1:
                 print("motor is now on")
@@ -123,8 +122,6 @@ def message(client, topic, message):
             print('color is now ' + str(message))
             pixels.fill(hex_to_rgb(str(message)))
             pixels.show()
-    print(override)
-    return override
 
 # Create a socket pool
 pool = socketpool.SocketPool(wifi.radio)
@@ -155,13 +152,28 @@ def hex_to_rgb(hex):
         decimal = int(hex[i:i+2], 16)
         rgb.append(decimal)
     return tuple(rgb)
+    
+def water():
+    moisture_lvl = ss.moisture_read()
+    #500 -> 750
+    if(moisture_lvl <= 500):
+        kit.motor1.throttle = 1
+        
+    if(moisture_lvl >= 750):
+        kit.motor1.throttle = 0
+    
+    pass
+    
+def auto_light():
+    light_lvl = veml7700.light
+    
 
 
 while True:
     for i in range(interval):
         try:
             mqtt_client.loop()
-            print(override)
+            water()
         except:
             pass
         time.sleep(1)
@@ -181,4 +193,3 @@ while True:
         
             print("sending humidity data: ", ahtx0.relative_humidity)
             mqtt_client.publish(humidity, ahtx0.relative_humidity)
-    
