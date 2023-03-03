@@ -56,6 +56,7 @@ temp = secrets["aio_username"] + "/feeds/arugula.temperature"
 moisture = secrets["aio_username"] + "/feeds/arugula.moisture"
 manual = secrets["aio_username"] + "/feeds/arugula.manual"
 switch = secrets["aio_username"] + "/feeds/arugula.light-switch"
+comms = secrets["aio_username"] + "/feeds/arugula.comms"
 
 ### Code ###
 
@@ -79,6 +80,7 @@ def connected(client, userdata, flags, rc):
 
 def disconnected(client, userdata, rc):
     # This method is called when the client is disconnected
+    console("Disconnected from Adafruit IO!")
     print("Disconnected from Adafruit IO!")
 
 
@@ -87,8 +89,7 @@ def message(client, topic, message):
     # This method is called when a topic the client is subscribed to
     # has a new message.
     
-    #print("New message on topic {0}: {1}".format(topic, message))
-            
+    #print("New message on topic {0}: {1}".format(topic, message)) 
     if(topic == switch):
         if int(message) == 1:
             print("Light is now on")
@@ -107,7 +108,6 @@ def message(client, topic, message):
             print("Manual Override Deactivated")
             override = 0
 
-            
     if(topic == pump_feed):
         if(override == 1):
             if int(message) == 1:
@@ -159,22 +159,48 @@ def water():
     if(moisture_lvl <= 500):
         kit.motor1.throttle = 1
         
-    if(moisture_lvl >= 750):
+    elif(moisture_lvl >= 750):
+        kit.motor1.throttle = 0
+    
+    else:
         kit.motor1.throttle = 0
     
     pass
     
 def auto_light():
     light_lvl = veml7700.light
-    
+    if(light_lvl <= 4250):
+        pixels.fill(hex_to_rgb("#1700ff"))
+        pixels.show()
+    else:
+        pixels.fill((0,0,0))
+        pixels.show()
 
+def console(text):
+    mqtt_client.publish(comms, text)
 
 while True:
     for i in range(interval):
         try:
             mqtt_client.loop()
-            water()
-        except:
+            if(override == 0):
+                water()
+                auto_light()
+                off = True
+            else:
+                if(off == True):
+                    kit.motor1.throttle = 0
+                    pixels.fill((0,0,0))
+                    pixels.show()
+                off = False
+                pass
+        except Exception as e:  # pylint: disable=broad-except
+            #print(type(e))
+            error = "Failed to get or send data, or connect. Error:" + str(e) + "\nBoard will hard reset in 30 seconds."
+            console(error)
+            print("Failed to get or send data, or connect. Error:", e, "\nBoard will hard reset in 30 seconds.")
+            time.sleep(30)
+            microcontroller.reset()
             pass
         time.sleep(1)
         if (i != 0) and (i < interval):
@@ -193,3 +219,4 @@ while True:
         
             print("sending humidity data: ", ahtx0.relative_humidity)
             mqtt_client.publish(humidity, ahtx0.relative_humidity)
+    
