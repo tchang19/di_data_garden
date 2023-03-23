@@ -13,6 +13,7 @@ import neopixel
 import adafruit_veml7700
 import adafruit_ahtx0
 from adafruit_seesaw.seesaw import Seesaw
+import microcontroller
 
 pixel_pin = board.A2
 num_pixels = 24
@@ -23,9 +24,9 @@ kit = MotorKit(i2c=board.I2C())
 veml7700 = adafruit_veml7700.VEML7700(i2c)
 ahtx0 = adafruit_ahtx0.AHTx0(i2c)
 ss = Seesaw(i2c, addr=0x36)
-interval = 30
+interval = 600
 color = "#1700ff"
-override = 0 
+override = 0
 
 kit.motor1.throttle = 0  #turn motor off
 
@@ -57,6 +58,7 @@ moisture = secrets["aio_username"] + "/feeds/arugula.moisture"
 manual = secrets["aio_username"] + "/feeds/arugula.manual"
 switch = secrets["aio_username"] + "/feeds/arugula.light-switch"
 comms = secrets["aio_username"] + "/feeds/arugula.comms"
+reboot = secrets["aio_username"] + "/feeds/arugula.reset"
 
 ### Code ###
 
@@ -73,6 +75,7 @@ def connected(client, userdata, flags, rc):
     client.subscribe(pump_feed)
     client.subscribe(manual)
     client.subscribe(switch)
+    client.subscribe(reboot)
     mqtt_client.publish(pump_feed, 0)
     mqtt_client.publish(manual, 0)
     mqtt_client.publish(switch, 0)
@@ -88,8 +91,8 @@ def message(client, topic, message):
     global override
     # This method is called when a topic the client is subscribed to
     # has a new message.
-    
-    #print("New message on topic {0}: {1}".format(topic, message)) 
+
+    #print("New message on topic {0}: {1}".format(topic, message))
     if(topic == switch):
         if int(message) == 1:
             print("Light is now on")
@@ -99,7 +102,7 @@ def message(client, topic, message):
             print("Light is now off")
             pixels.fill((0, 0, 0))
             pixels.show()
-    
+
     if(topic == manual):
         if int(message) == 1:
             print("MANUAL OVERRIDE INITIATED")
@@ -116,13 +119,17 @@ def message(client, topic, message):
             else:
                 print("motor is now off")
                 kit.motor1.throttle = int(message)
-        
+
     if (topic == light_feed):
         if(override == 1):
             print('color is now ' + str(message))
             pixels.fill(hex_to_rgb(str(message)))
             pixels.show()
 
+    if(topic == reboot):
+        console("Reseting Board")
+        time.sleep(5)
+        microcontroller.reset()
 # Create a socket pool
 pool = socketpool.SocketPool(wifi.radio)
 
@@ -143,8 +150,16 @@ mqtt_client.on_message = message
 
 # Connect the client to the MQTT broker.
 print("Connecting to Adafruit IO...")
-mqtt_client.connect()
-
+try:
+    mqtt_client.connect()
+except Exception as e:
+    error = "Failed to get or send data, or connect. Error:" + str(e) + ". Board will hard reset in 30 seconds."
+    console(error)
+    print("Failed to get or send data, or connect. Error:", e, ". Board will hard reset in 30 seconds.")
+    time.sleep(30)
+    microcontroller.reset()
+    pass
+    
 def hex_to_rgb(hex):
     hex = hex.lstrip("#")
     rgb = []
@@ -152,21 +167,16 @@ def hex_to_rgb(hex):
         decimal = int(hex[i:i+2], 16)
         rgb.append(decimal)
     return tuple(rgb)
-    
+
 def water():
     moisture_lvl = ss.moisture_read()
     #500 -> 750
-    if(moisture_lvl <= 500):
+    if(moisture_lvl <= 850):
         kit.motor1.throttle = 1
-        
-    elif(moisture_lvl >= 750):
-        kit.motor1.throttle = 0
-    
     else:
         kit.motor1.throttle = 0
-    
     pass
-    
+
 def auto_light():
     light_lvl = veml7700.light
     if(light_lvl <= 4250):
@@ -176,13 +186,22 @@ def auto_light():
         pixels.fill((0,0,0))
         pixels.show()
 
+def daily_reset():
+    t = time.localtime()
+    current = str(t.tm_hour) + "." + str(t.tm_min)
+    if(float(current) == 12.00):
+        console("Daily Reset")
+        time.sleep(30)
+        microcontroller.reset()
+    
 def console(text):
     mqtt_client.publish(comms, text)
 
 while True:
     for i in range(interval):
         try:
-            mqtt_client.loop()
+            daily_reset()
+            mqtt_client.loop() 
             if(override == 0):
                 water()
                 auto_light()
@@ -196,9 +215,9 @@ while True:
                 pass
         except Exception as e:  # pylint: disable=broad-except
             #print(type(e))
-            error = "Failed to get or send data, or connect. Error:" + str(e) + "\nBoard will hard reset in 30 seconds."
+            error = "Failed to get or send data, or connect. Error:" + str(e) + ". Board will hard reset in 30 seconds."
             console(error)
-            print("Failed to get or send data, or connect. Error:", e, "\nBoard will hard reset in 30 seconds.")
+            print("Failed to get or send data, or connect. Error:", e, ". Board will hard reset in 30 seconds.")
             time.sleep(30)
             microcontroller.reset()
             pass
@@ -210,13 +229,12 @@ while True:
         else:
             print("sending light data: ", veml7700.light)
             mqtt_client.publish(light, veml7700.light)
-        
+
             print("sending temp data: ", ahtx0.temperature)
             mqtt_client.publish(temp, ahtx0.temperature)
-        
+
             print("sending moisture data: ", ss.moisture_read())
             mqtt_client.publish(moisture, ss.moisture_read())
-        
+
             print("sending humidity data: ", ahtx0.relative_humidity)
             mqtt_client.publish(humidity, ahtx0.relative_humidity)
-    
